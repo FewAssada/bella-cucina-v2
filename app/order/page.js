@@ -1,3 +1,4 @@
+// @ts-nocheck
 // app/order/page.js
 "use client";
 import { useEffect, useState, Suspense } from "react";

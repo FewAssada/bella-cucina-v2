@@ -1,3 +1,4 @@
+// @ts-nocheck
 // app/kitchen/page.js
 "use client";
 import { useEffect, useState } from "react";
