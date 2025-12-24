@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 
 export default function Home() {
   const router = useRouter();
-  const [tables, setTables] = useState([]);
+  const [tables, setTables] = useState<any[]>([]);
 
   useEffect(() => {
     // ดึงรายชื่อโต๊ะจาก Supabase
