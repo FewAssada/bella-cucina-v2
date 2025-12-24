@@ -16,30 +16,29 @@ function OrderPageContent() {
   const [table, setTable] = useState(null);
   const [cart, setCart] = useState({});
   const [isAuthorized, setIsAuthorized] = useState(false);
-  const [sessionEnded, setSessionEnded] = useState(false); // 🔥 เพิ่มสถานะ "จบงาน"
+  const [sessionEnded, setSessionEnded] = useState(false);
   const [activeCategory, setActiveCategory] = useState('All');
 
-  // Logic ตรวจสอบสิทธิ์
+  // ตรวจสอบสิทธิ์ (Security Core)
   const checkAuth = (tData) => {
-    if (!tData || sessionEnded) return; // ถ้าจบงานแล้ว ไม่ต้องเช็คต่อ
+    if (!tData || sessionEnded) return;
     const localKey = localStorage.getItem(`session_key_${tData.id}`);
 
     if (tData.status === 'occupied' && tData.session_key === localKey) {
         setIsAuthorized(true);
     } else {
         setIsAuthorized(false);
-        // ถ้าโต๊ะว่าง หรือ รหัสไม่ตรง (และเราเคยมีรหัส) -> ถือว่าจบงาน
+        // ถ้าเรามีกุญแจ แต่กุญแจโต๊ะเปลี่ยนไปแล้ว หรือโต๊ะปิด -> จบงาน
         if (localKey && tData.session_key !== localKey) {
             handleSessionEnd(tData.id);
         }
     }
   };
 
-  // ฟังก์ชันจบการทำงาน (ลบรหัส + บล็อกการเชื่อมต่อ)
   const handleSessionEnd = (tId) => {
       localStorage.removeItem(`session_key_${tId}`);
       setIsAuthorized(false);
-      setSessionEnded(true); // 🔒 ล็อกตายหน้านี้เลย
+      setSessionEnded(true);
   };
 
   useEffect(() => {
@@ -54,35 +53,33 @@ function OrderPageContent() {
     };
     initData();
 
+    // Realtime Listener
     const channel = supabase.channel(`table-${tableId}-secure`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'restaurant_tables', filter: `id=eq.${tableId}` }, 
         (payload) => {
            const tData = payload.new;
            setTable(tData);
 
-           // 🛑 ถ้าอยู่ในสถานะ "จบงาน" แล้ว ให้หยุดรับข้อมูลทันที (กันลูกค้าเก่าเด้งกลับมา)
            if (sessionEnded) return;
 
-           // กรณี 1: ได้รับกุญแจใหม่ (เฉพาะตอนที่ยังไม่มีกุญแจ)
+           // กรณี: ได้รับกุญแจใหม่ (Auto-Auth จากห้องพักคอย)
            if (tData.status === 'occupied' && tData.session_key && !localStorage.getItem(`session_key_${tData.id}`)) {
                localStorage.setItem(`session_key_${tData.id}`, tData.session_key);
                setIsAuthorized(true);
-           } 
-           // กรณี 2: โต๊ะถูกปิด หรือ เปลี่ยนรหัส -> เตะออก
-           else {
+           } else {
                checkAuth(tData);
            }
         }
       )
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [tableId, sessionEnded]); // เพิ่ม sessionEnded ใน dependency
+  }, [tableId, sessionEnded]);
 
-  // Logic สั่งอาหาร (ย่อไว้)
+  // Logic สั่งอาหาร
   const addToCart = (item) => setCart(prev => ({ ...prev, [item.id]: (prev[item.id] || 0) + 1 }));
   const removeFromCart = (item) => setCart(prev => { const newCart = { ...prev }; if (newCart[item.id] > 1) newCart[item.id]--; else delete newCart[item.id]; return newCart; });
   const placeOrder = async () => {
-    if (sessionEnded) return alert("Session หมดอายุแล้ว");
+    if (sessionEnded) return alert("Session หมดอายุ");
     if (Object.values(cart).reduce((a, b) => a + b, 0) === 0) return;
     const items = Object.keys(cart).map(id => { const m = menu.find(x => x.id == id); return { id: m.id, name: m.name, price: m.price, quantity: cart[id] }; });
     const total = items.reduce((s, i) => s + (i.price * i.quantity), 0);
@@ -98,32 +95,24 @@ function OrderPageContent() {
 
   if (!tableId) return <div className="h-screen flex items-center justify-center text-gray-500">📷 สแกน QR Code ที่โต๊ะนะครับ</div>;
 
-  // 🔴 หน้าจอ "จบงาน" (Session Ended) - ลูกค้าเก่าจะติดอยู่หน้านี้ตลอดกาล
+  // Screen 1: จบงานแล้ว
   if (sessionEnded) {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 p-6 text-center font-sans animate-fade-in">
-            <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-green-500/50">
-                <span className="text-4xl">🙏</span>
-            </div>
+            <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-green-500/50"><span className="text-4xl">🙏</span></div>
             <h1 className="text-2xl font-black text-white mb-2">ขอบคุณที่ใช้บริการ</h1>
-            <p className="text-gray-400 mb-8">รายการของคุณสิ้นสุดแล้ว<br/>โอกาสหน้าเชิญใหม่นะครับ</p>
-            
-            <div className="text-xs text-gray-600 border-t border-gray-800 pt-4 mt-4 w-full max-w-xs mx-auto">
-                หากต้องการสั่งใหม่ กรุณาสแกน QR Code อีกครั้ง
-            </div>
+            <p className="text-gray-400 mb-8">รายการของคุณสิ้นสุดแล้ว<br/>หากต้องการสั่งเพิ่ม กรุณาสแกนใหม่</p>
         </div>
       );
   }
 
-  // 🟡 หน้าจอ "ห้องพักคอย" (Waiting Room) - ลูกค้าใหม่จะเห็นหน้านี้
+  // Screen 2: ห้องพักคอย (Waiting Room)
   if (!isAuthorized) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 p-6 text-center font-sans animate-fade-in">
          <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-sm relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-orange-400 to-red-500 animate-loading-bar"></div>
-            <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                <span className="text-4xl animate-pulse">📡</span>
-            </div>
+            <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6"><span className="text-4xl animate-pulse">📡</span></div>
             <h1 className="text-2xl font-black text-gray-800 mb-2">โต๊ะ {table?.table_number}</h1>
             <p className="text-gray-500 font-medium mb-6">กรุณารอพนักงานเปิดโต๊ะ...</p>
             <div className="bg-gray-100 rounded-xl p-4 text-xs text-gray-400">เมื่อพนักงานอนุมัติ ระบบจะเข้าสู่หน้าเมนูอัตโนมัติ</div>
@@ -133,7 +122,7 @@ function OrderPageContent() {
     );
   }
 
-  // 🟢 หน้าสั่งอาหาร (เข้าใช้งานได้)
+  // Screen 3: หน้าสั่งอาหาร (Main)
   return (
     <div className="min-h-screen bg-gray-100 pb-32 max-w-md mx-auto relative font-sans">
       <div className="bg-white p-4 sticky top-0 z-30 shadow-sm flex justify-between items-center">
@@ -156,8 +145,9 @@ function OrderPageContent() {
           </div>
         )})}
       </div>
-      {totalItems > 0 && ( <div className="fixed bottom-0 left-0 w-full p-4 z-30 bg-gradient-to-t from-white via-white to-transparent pt-8"><div className="max-w-md mx-auto bg-gray-900 text-white p-4 rounded-2xl shadow-xl flex justify-between items-center"><div><p className="text-sm text-gray-400">รายการ: {totalItems}</p><p className="font-bold text-xl">รวม: {totalPrice} บาท</p></div><button onClick={placeOrder} className="bg-orange-500 px-6 py-2 rounded-xl font-bold">ยืนยันสั่ง 🚀</button></div></div> )}
+      {totalItems > 0 && ( <div className="fixed bottom-0 left-0 w-full p-4 z-30 bg-gradient-to-t from-white via-white to-transparent pt-8"><div className="max-w-md mx-auto bg-gray-900 text-white p-4 rounded-2xl shadow-xl flex justify-between items-center"><div><p className="text-sm text-gray-400">รายการ: {totalItems}</p><p className="font-bold text-xl">รวม: {totalPrice} บาท</p></div><button onClick={placeOrder} className="bg-orange-500 px-6 py-2 rounded-xl font-bold text-white shadow-lg">ยืนยันสั่ง 🚀</button></div></div> )}
     </div>
   );
 }
+
 export default function OrderPage() { return <Suspense fallback={<div>Loading...</div>}><OrderPageContent /></Suspense>; }

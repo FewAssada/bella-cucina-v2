@@ -1,4 +1,3 @@
-// app/page.js
 export default function Home() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-6 text-center font-sans">
@@ -11,7 +10,6 @@ export default function Home() {
         <span className="text-orange-600 font-bold">กรุณาสแกน QR Code ที่โต๊ะ</span><br/>
         เพื่อระบุเลขโต๊ะของคุณนะครับ
       </p>
-      
       <div className="text-sm text-gray-400 border-t pt-4 w-full max-w-xs">
         Bella Cucina © 2025
       </div>
