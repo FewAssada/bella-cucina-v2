@@ -1,50 +1,44 @@
-// @ts-nocheck
 "use client";
-import Link from "next/link";
-import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
 
 export default function Home() {
   const router = useRouter();
-  const [tables, setTables] = useState<any[]>([]);
 
-  useEffect(() => {
-    // ดึงรายชื่อโต๊ะจาก Supabase
-    const fetchTables = async () => {
-      const { data } = await supabase.from('restaurant_tables').select('*').order('table_number');
-      if (data) setTables(data);
-    };
-    fetchTables();
-  }, []);
-
-  const handleKitchenLogin = () => {
-    const pin = prompt("รหัสผ่านห้องครัว:");
-    if (pin === "45698") router.push("/kitchen");
-    else alert("รหัสผิดครับ!");
+  // ฟังก์ชันสำหรับแอบเข้าครัว (หรือจะทำเป็นปุ่มเล็กๆ มุมขวาก็ได้)
+  const handleStaffLogin = () => {
+    const pin = prompt("รหัสพนักงาน:");
+    if (pin === "45698") router.push("/kitchen"); // รหัสถูก ดีดไปหน้าครัว
+    else if (pin) alert("รหัสผิดครับ!");
   };
 
   return (
-    <main className="min-h-screen bg-[#0b1220] text-[#e8edf7] flex flex-col items-center justify-center p-6 font-sans">
-      <div className="text-center max-w-4xl w-full">
-        <h1 className="text-5xl font-extrabold mb-8 text-[#ffd166] font-serif">เลือกโต๊ะของคุณ</h1>
-        
-        {/* Grid แสดงโต๊ะ */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-10">
-          {tables.map((t) => (
-            <Link key={t.id} href={`/order?table=${t.table_number}`} 
-              className="bg-[#111a2e] p-6 rounded-2xl border border-white/5 hover:bg-white/5 hover:scale-105 transition-all flex flex-col items-center group">
-              <span className="text-4xl mb-2 group-hover:scale-110 transition-transform">🍽️</span>
-              <span className="font-bold text-xl">โต๊ะ {t.table_number}</span>
-            </Link>
-          ))}
-        </div>
-
-        {/* ปุ่มเข้าครัว */}
-        <button onClick={handleKitchenLogin} className="px-6 py-3 rounded-xl border border-white/10 hover:bg-white/5 text-[#a9b4c7] hover:text-white transition-colors text-sm">
-          🔒 จัดการร้าน / ห้องครัว
-        </button>
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6 text-center font-sans">
+      
+      {/* Icon */}
+      <div className="w-24 h-24 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mb-6 shadow-sm animate-bounce">
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4h-4v-4H6v-4h12v4zm-6-9l3-3 3 3M8 11h8" />
+        </svg>
       </div>
-    </main>
+
+      <h1 className="text-3xl font-black text-gray-800 mb-2">ยินดีต้อนรับสู่ Bella Cucina</h1>
+      
+      <p className="text-gray-500 mb-10 max-w-sm text-lg leading-relaxed">
+        เพื่อเริ่มสั่งอาหาร <br/>
+        <span className="text-orange-600 font-bold text-xl">กรุณาสแกน QR Code</span><br/>
+        ที่ติดอยู่บนโต๊ะของคุณนะครับ
+      </p>
+
+      {/* ส่วน Footer แอบปุ่ม Staff ไว้ */}
+      <div className="fixed bottom-6 text-sm text-gray-300 w-full text-center">
+        <span 
+            onClick={handleStaffLogin} 
+            className="cursor-pointer hover:text-gray-500 transition-colors"
+        >
+            © 2025 Bella Cucina Management
+        </span>
+      </div>
+
+    </div>
   );
 }
