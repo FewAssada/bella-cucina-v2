@@ -27,10 +27,9 @@ function OrderPageContent() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [activeCategory, setActiveCategory] = useState('Noodles');
-  const [selections, setSelections] = useState({});
   
-  // 🛍️ State สำหรับเลือกประเภทการสั่ง (เพิ่มใหม่)
-  const [orderType, setOrderType] = useState('dine_in'); // dine_in, takeaway
+  // เก็บสถานะตัวเลือกของแต่ละเมนู (รวมสถานะกลับบ้านด้วย)
+  const [selections, setSelections] = useState({});
 
   // Security Logic
   const checkAuth = (tData) => {
@@ -59,27 +58,42 @@ function OrderPageContent() {
     return () => supabase.removeChannel(channel);
   }, [tableId, sessionEnded]);
 
-  const getSelection = (itemId) => selections[itemId] || { noodle: '', extras: [] };
-  const handleNoodleChange = (itemId, val) => { setSelections(prev => ({ ...prev, [itemId]: { ...getSelection(itemId), noodle: val } })); };
+  // --- Helper Functions ---
+  const getSelection = (itemId) => selections[itemId] || { noodle: '', extras: [], isTakeaway: false };
+
+  const handleNoodleChange = (itemId, val) => { 
+      setSelections(prev => ({ ...prev, [itemId]: { ...getSelection(itemId), noodle: val } })); 
+  };
+  
   const handleExtraToggle = (itemId, extraName) => {
       const current = getSelection(itemId);
       const newExtras = current.extras.includes(extraName) ? current.extras.filter(e => e !== extraName) : [...current.extras, extraName];
       setSelections(prev => ({ ...prev, [itemId]: { ...current, extras: newExtras } }));
   };
 
+  // 🔥 ฟังก์ชันติ๊กกลับบ้าน
+  const handleTakeawayToggle = (itemId) => {
+      const current = getSelection(itemId);
+      setSelections(prev => ({ ...prev, [itemId]: { ...current, isTakeaway: !current.isTakeaway } }));
+  };
+
   const addToCart = (item, variant = 'normal') => {
       const sel = getSelection(item.id);
       if (item.category === 'Noodles' && !sel.noodle) return alert("กรุณาเลือกเส้นก่อนครับ 🍜");
+      
       const extrasKey = sel.extras.sort().join(',');
-      const cartKey = `${item.id}-${variant}-${sel.noodle || 'none'}-${extrasKey}`; 
+      // สร้าง Key โดยรวมสถานะกลับบ้านไปด้วย (เพื่อแยกรายการ ทานร้าน vs กลับบ้าน)
+      const cartKey = `${item.id}-${variant}-${sel.noodle || 'none'}-${extrasKey}-${sel.isTakeaway ? 'takeaway' : 'dinein'}`; 
+      
       setCart(prev => ({ ...prev, [cartKey]: (prev[cartKey] || 0) + 1 }));
   };
 
   const removeFromCart = (item, variant = 'normal') => {
       const sel = getSelection(item.id);
       const extrasKey = sel.extras.sort().join(',');
-      const cartKey = `${item.id}-${variant}-${sel.noodle || 'none'}-${extrasKey}`;
-      if (!cart[cartKey]) return alert("ไม่พบรายการนี้");
+      const cartKey = `${item.id}-${variant}-${sel.noodle || 'none'}-${extrasKey}-${sel.isTakeaway ? 'takeaway' : 'dinein'}`;
+      
+      if (!cart[cartKey]) return alert("ไม่พบรายการนี้ในตะกร้า (ตรวจสอบตัวเลือกให้ตรงกัน)");
       setCart(prev => { const newCart = { ...prev }; if (newCart[cartKey] > 1) newCart[cartKey]--; else delete newCart[cartKey]; return newCart; });
   };
 
@@ -89,8 +103,12 @@ function OrderPageContent() {
     
     // แปลงรายการ
     const items = Object.keys(cart).map(key => {
-        const [id, variant, noodle, ...rest] = key.split('-');
-        const extrasStr = rest.join('-'); // fix extras split
+        // แยก key: id-variant-noodle-extras-type
+        const parts = key.split('-');
+        const type = parts.pop(); // เอาตัวสุดท้ายออก (takeaway/dinein)
+        const extrasStr = parts.slice(3).join('-');
+        const [id, variant, noodle] = parts;
+        
         const extras = extrasStr ? extrasStr.split(',') : [];
         const m = menu.find(x => x.id == id);
         
@@ -106,18 +124,22 @@ function OrderPageContent() {
         if (variant === 'special') fullName += ` (พิเศษ)`;
         if (extrasText) fullName += extrasText;
 
-        return { id: m.id, name: fullName, price: finalPrice, quantity: cart[key] };
+        return { 
+            id: m.id, 
+            name: fullName, 
+            price: finalPrice, 
+            quantity: cart[key],
+            is_takeaway: type === 'takeaway' // ส่งสถานะไปบอกครัว
+        };
     });
 
     const total = items.reduce((s, i) => s + (i.price * i.quantity), 0);
     
-    // 🔥 ส่ง order_type ไปด้วย
     await supabase.from('orders').insert([{ 
         table_number: table.table_number, 
         items, 
         total_price: total, 
-        status: 'pending',
-        order_type: orderType // <--- ตรงนี้ครับ
+        status: 'pending'
     }]);
     
     alert("✅ สั่งเรียบร้อย!");
@@ -131,8 +153,12 @@ function OrderPageContent() {
   
   const totalItems = Object.values(cart).reduce((a, b) => a + b, 0);
   const totalPrice = Object.keys(cart).reduce((sum, key) => {
-    const [id, variant, noodle, ...rest] = key.split('-');
-    const extrasStr = rest.join('-');
+    // คำนวณราคาเหมือนเดิม (ตัดตัวท้ายทิ้งก่อน split)
+    const parts = key.split('-');
+    parts.pop(); 
+    const extrasStr = parts.slice(3).join('-');
+    const [id, variant] = parts;
+    
     const extras = extrasStr ? extrasStr.split(',') : [];
     const item = menu.find(m => m.id == id);
     if (!item) return sum;
@@ -150,26 +176,8 @@ function OrderPageContent() {
       <div className="bg-white p-4 sticky top-0 z-30 shadow-sm flex justify-between items-center">
          <h1 className="text-xl font-black text-orange-600">🍜 ก๋วยเตี๋ยวรสเด็ด <span className="text-gray-400 text-sm font-normal">| โต๊ะ {table.table_number}</span></h1>
       </div>
-
-      {/* 🔥 ปุ่มสลับ ทานที่ร้าน / กลับบ้าน */}
-      <div className="bg-white px-4 pt-0 pb-4">
-        <div className="bg-gray-100 p-1 rounded-xl flex relative">
-            <button 
-                onClick={() => setOrderType('dine_in')}
-                className={`flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${orderType === 'dine_in' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-                <span>🏠</span> ทานที่ร้าน
-            </button>
-            <button 
-                onClick={() => setOrderType('takeaway')}
-                className={`flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${orderType === 'takeaway' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-                <span>🛍️</span> กลับบ้าน
-            </button>
-        </div>
-      </div>
       
-      <div className="bg-white px-2 py-2 sticky top-[60px] z-20 shadow-sm flex gap-1 justify-center border-b border-gray-100 mt-1">
+      <div className="bg-white px-2 py-2 sticky top-[60px] z-20 shadow-sm flex gap-1 justify-center border-b border-gray-100">
           {categories.map(cat => ( <button key={cat} onClick={() => setActiveCategory(cat)} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${activeCategory === cat ? 'bg-orange-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>{categoryNames[cat]}</button> ))}
       </div>
       
@@ -177,8 +185,11 @@ function OrderPageContent() {
         {filteredMenu.map((item) => { 
             const sel = getSelection(item.id);
             const extrasKey = sel.extras.sort().join(',');
-            const cartKeyNormal = `${item.id}-normal-${sel.noodle || 'none'}-${extrasKey}`;
-            const cartKeySpecial = `${item.id}-special-${sel.noodle || 'none'}-${extrasKey}`;
+            // Key สำหรับตะกร้า (แยกตามสถานะกลับบ้าน)
+            const typeKey = sel.isTakeaway ? 'takeaway' : 'dinein';
+            const cartKeyNormal = `${item.id}-normal-${sel.noodle || 'none'}-${extrasKey}-${typeKey}`;
+            const cartKeySpecial = `${item.id}-special-${sel.noodle || 'none'}-${extrasKey}-${typeKey}`;
+            
             const qtyNormal = cart[cartKeyNormal] || 0;
             const qtySpecial = cart[cartKeySpecial] || 0;
             const hasSpecial = item.price_special > 0;
@@ -201,6 +212,14 @@ function OrderPageContent() {
              {showOptions && (
                  <div className="mb-3 flex flex-wrap gap-2">{EXTRA_OPTIONS.map((ex) => ( <button key={ex.name} onClick={() => handleExtraToggle(item.id, ex.name)} className={`px-3 py-1 rounded-full text-xs border transition-all ${sel.extras.includes(ex.name) ? 'bg-green-100 border-green-500 text-green-700 font-bold' : 'bg-white border-gray-300 text-gray-500'}`}>{sel.extras.includes(ex.name) ? '✅' : '+'} {ex.name} {ex.price > 0 && `(+${ex.price})`}</button> ))}</div>
              )}
+            
+             {/* 🔥 Checkbox ใส่ถุงกลับบ้าน */}
+             <div className="mb-3 flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-dashed border-gray-300 cursor-pointer" onClick={() => handleTakeawayToggle(item.id)}>
+                <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${sel.isTakeaway ? 'bg-orange-500 border-orange-500' : 'bg-white border-gray-400'}`}>
+                    {sel.isTakeaway && <span className="text-white text-xs font-bold">✓</span>}
+                </div>
+                <span className={`text-sm font-bold ${sel.isTakeaway ? 'text-orange-600' : 'text-gray-500'}`}>ใส่ถุงกลับบ้าน 🛍️</span>
+             </div>
 
              <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-dashed">
                 <div className="flex justify-between items-center pr-2 border-r border-gray-100">
@@ -223,7 +242,7 @@ function OrderPageContent() {
         )})}
       </div>
       
-      {totalItems > 0 && ( <div className="fixed bottom-0 left-0 w-full p-4 z-30 bg-gradient-to-t from-white via-white to-transparent pt-8"><div className="max-w-md mx-auto bg-gray-900 text-white p-4 rounded-2xl shadow-xl flex justify-between items-center"><div><p className="text-sm text-gray-400">รายการ: {totalItems} {orderType === 'takeaway' ? '(กลับบ้าน)' : ''}</p><p className="font-bold text-xl">รวม: {totalPrice} บาท</p></div><button onClick={placeOrder} className="bg-orange-500 px-6 py-2 rounded-xl font-bold text-white shadow-lg active:scale-95 transition-transform">ยืนยันสั่ง 🚀</button></div></div> )}
+      {totalItems > 0 && ( <div className="fixed bottom-0 left-0 w-full p-4 z-30 bg-gradient-to-t from-white via-white to-transparent pt-8"><div className="max-w-md mx-auto bg-gray-900 text-white p-4 rounded-2xl shadow-xl flex justify-between items-center"><div><p className="text-sm text-gray-400">รายการ: {totalItems}</p><p className="font-bold text-xl">รวม: {totalPrice} บาท</p></div><button onClick={placeOrder} className="bg-orange-500 px-6 py-2 rounded-xl font-bold text-white shadow-lg active:scale-95 transition-transform">ยืนยันสั่ง 🚀</button></div></div> )}
     </div>
   );
 }

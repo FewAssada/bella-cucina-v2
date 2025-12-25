@@ -12,7 +12,7 @@ const ADMIN_PIN = "160942";
 export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState("");
-  const [activeTab, setActiveTab] = useState('orders'); // เริ่มที่หน้าออเดอร์
+  const [activeTab, setActiveTab] = useState('orders');
   const [tables, setTables] = useState([]);
   const [orders, setOrders] = useState([]);
   const [menus, setMenus] = useState([]);
@@ -59,7 +59,6 @@ export default function AdminPage() {
   };
   const handleCloseTable = async (id) => { if(confirm("ปิดโต๊ะ?")) await supabase.from('restaurant_tables').update({ status: 'available', session_key: null }).eq('id', id); fetchData(); };
   const addTable = async () => { const next = tables.length > 0 ? Math.max(...tables.map(t => t.table_number)) + 1 : 1; await supabase.from('restaurant_tables').insert([{ table_number: next, status: 'available' }]); fetchData(); };
-
   const handleAddMenu = async (e) => { 
       e.preventDefault(); 
       const payload = { ...newMenu, price_special: newMenu.price_special ? newMenu.price_special : null };
@@ -149,13 +148,20 @@ export default function AdminPage() {
                      <div className="flex justify-between border-b border-gray-700 pb-2 mb-2">
                          <div className="flex items-center gap-2">
                              <span className="font-bold text-orange-400 text-lg">โต๊ะ {o.table_number}</span>
-                             {/* 🔥 โชว์ป้ายกลับบ้าน */}
-                             {o.order_type === 'takeaway' && <span className="bg-red-500 text-white px-2 py-0.5 rounded text-xs font-bold border border-red-400 shadow-sm animate-pulse">🛍️ กลับบ้าน</span>}
-                             {o.order_type === 'dine_in' && <span className="bg-green-600/30 text-green-400 px-2 py-0.5 rounded text-xs border border-green-600/50">🏠 ทานร้าน</span>}
                          </div>
                          <span className={`text-xs px-2 rounded ${o.status==='pending'?'bg-yellow-600':o.status==='completed'?'bg-green-600':'bg-blue-600'}`}>{o.status}</span>
                      </div>
-                     {o.items.map((i,idx)=><div key={idx} className="flex justify-between text-sm text-gray-300"><span>{i.name} {i.variant && <span className="text-yellow-400">({i.variant})</span>} x{i.quantity}</span><span>{i.price*i.quantity}</span></div>)}
+                     {o.items.map((i,idx)=>(
+                         <div key={idx} className="flex justify-between text-sm text-gray-300">
+                             <span>
+                                {i.name} {i.variant && <span className="text-yellow-400">({i.variant})</span>}
+                                {/* 🔥 แสดงป้ายกลับบ้าน */}
+                                {i.is_takeaway && <span className="ml-2 text-red-400 font-bold border border-red-500/50 px-1 rounded text-xs">🛍️ กลับบ้าน</span>}
+                                <span className="text-gray-500 ml-1">x{i.quantity}</span>
+                             </span>
+                             <span>{i.price*i.quantity}</span>
+                         </div>
+                     ))}
                      <div className="text-right mt-2 font-bold text-green-400">รวม: {o.total_price}.-</div>
                  </div>
                  <div className="flex flex-col gap-2 justify-center">
