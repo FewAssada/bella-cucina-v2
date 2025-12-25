@@ -11,21 +11,31 @@ const supabase = createClient(
 // 🍜 รายการเส้น
 const NOODLE_OPTIONS = ["เส้นเล็ก", "เส้นใหญ่", "หมี่ขาว", "บะหมี่เหลือง", "มาม่า", "วุ้นเส้น"];
 
+// 🥓 รายการเครื่องเคียง / ท็อปปิ้ง (เพิ่มตรงนี้ได้เลย)
+const EXTRA_OPTIONS = [
+  { name: "เพิ่มลูกชิ้น (3 ลูก)", price: 10 },
+  { name: "กากหมูเจียว", price: 10 },
+  { name: "เพิ่มผักบุ้ง", price: 5 },
+  { name: "ไม่ใส่ถั่วงอก", price: 0 },
+  { name: "ไม่ใส่ผักโรย", price: 0 }
+];
+
 function OrderPageContent() {
   const searchParams = useSearchParams();
   const tableId = searchParams.get("table");
   
   const [menu, setMenu] = useState([]);
   const [table, setTable] = useState(null);
-  // ตะกร้าเก็บ key: "id-variant-noodle"
   const [cart, setCart] = useState({}); 
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [sessionEnded, setSessionEnded] = useState(false);
-  const [activeCategory, setActiveCategory] = useState('Noodles'); // เริ่มที่หน้าก๋วยเตี๋ยว
-  // เก็บค่าเส้นที่ลูกค้ากำลังเลือกอยู่ (แยกแต่ละเมนู)
-  const [selectedNoodles, setSelectedNoodles] = useState({});
+  const [activeCategory, setActiveCategory] = useState('Noodles');
 
-  // Security Logic (เหมือนเดิม)
+  // เก็บค่าตัวเลือกต่างๆ ของแต่ละเมนู
+  const [selections, setSelections] = useState({}); 
+  // รูปแบบ: { itemId: { noodle: 'เส้นเล็ก', extras: ['เพิ่มลูกชิ้น', 'ไม่งอก'] } }
+
+  // Security Check (เหมือนเดิม)
   const checkAuth = (tData) => {
     if (!tData || sessionEnded) return;
     const localKey = localStorage.getItem(`session_key_${tData.id}`);
@@ -52,51 +62,88 @@ function OrderPageContent() {
     return () => supabase.removeChannel(channel);
   }, [tableId, sessionEnded]);
 
-  // --- Logic เลือกเส้น ---
-  const handleNoodleChange = (itemId, noodle) => {
-      setSelectedNoodles(prev => ({ ...prev, [itemId]: noodle }));
+  // --- Helper Functions จัดการ State ตัวเลือก ---
+  const getSelection = (itemId) => selections[itemId] || { noodle: '', extras: [] };
+
+  const handleNoodleChange = (itemId, val) => {
+      setSelections(prev => ({ ...prev, [itemId]: { ...getSelection(itemId), noodle: val } }));
   };
 
-  // --- Logic ตะกร้า ---
-  const addToCart = (item, variant = 'normal') => {
-      // เช็คว่าต้องเลือกเส้นไหม? (หมวด Noodles ต้องเลือก, หมวดอื่นไม่ต้อง)
-      let noodle = '';
-      if (item.category === 'Noodles') {
-          noodle = selectedNoodles[item.id];
-          if (!noodle) return alert("กรุณาเลือกเส้นก่อนครับ 🍜");
-      }
+  const handleExtraToggle = (itemId, extraName) => {
+      const current = getSelection(itemId);
+      const newExtras = current.extras.includes(extraName)
+          ? current.extras.filter(e => e !== extraName) // เอาออก
+          : [...current.extras, extraName]; // เพิ่มเข้า
+      setSelections(prev => ({ ...prev, [itemId]: { ...current, extras: newExtras } }));
+  };
 
-      const key = `${item.id}-${variant}-${noodle || 'none'}`; // สร้าง Key ไม่ซ้ำกัน
-      setCart(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+  // --- Logic ตะกร้าสินค้า ---
+  const addToCart = (item, variant = 'normal') => {
+      const sel = getSelection(item.id);
+      
+      // บังคับเลือกเส้น (ถ้าเป็นก๋วยเตี๋ยว)
+      if (item.category === 'Noodles' && !sel.noodle) return alert("กรุณาเลือกเส้นก่อนครับ 🍜");
+
+      // สร้าง Key เฉพาะสำหรับสินค้านี้ (รวมท็อปปิ้งด้วย เพื่อให้แยกรายการกัน)
+      // เช่น: 1-normal-เส้นเล็ก-เพิ่มลูกชิ้น,กากหมู
+      const extrasKey = sel.extras.sort().join(',');
+      const cartKey = `${item.id}-${variant}-${sel.noodle || 'none'}-${extrasKey}`; 
+
+      setCart(prev => ({ ...prev, [cartKey]: (prev[cartKey] || 0) + 1 }));
   };
 
   const removeFromCart = (item, variant = 'normal') => {
-      let noodle = '';
-      if (item.category === 'Noodles') {
-          noodle = selectedNoodles[item.id];
-          if (!noodle) return alert("เลือกเส้นที่จะลบออกก่อนครับ");
-      }
-      const key = `${item.id}-${variant}-${noodle || 'none'}`;
-      setCart(prev => { const newCart = { ...prev }; if (newCart[key] > 1) newCart[key]--; else delete newCart[key]; return newCart; });
+      const sel = getSelection(item.id);
+      const extrasKey = sel.extras.sort().join(',');
+      const cartKey = `${item.id}-${variant}-${sel.noodle || 'none'}-${extrasKey}`;
+
+      if (!cart[cartKey]) return alert("ไม่พบรายการที่ตรงกับตัวเลือกนี้ในตะกร้า");
+      
+      setCart(prev => { 
+          const newCart = { ...prev }; 
+          if (newCart[cartKey] > 1) newCart[cartKey]--; 
+          else delete newCart[cartKey]; 
+          return newCart; 
+      });
   };
 
   const placeOrder = async () => {
     if (sessionEnded) return alert("Session หมดอายุ");
     if (Object.values(cart).reduce((a, b) => a + b, 0) === 0) return;
     
+    // แปลงตะกร้าเป็นรายการออเดอร์
     const items = Object.keys(cart).map(key => {
-        const [id, variant, noodle] = key.split('-');
+        // key format: id-variant-noodle-extras
+        const parts = key.split('-');
+        const id = parts[0];
+        const variant = parts[1];
+        const noodle = parts[2];
+        const extrasStr = parts.slice(3).join('-'); // เผื่อชื่อ extra มีขีด
+        const extras = extrasStr ? extrasStr.split(',') : [];
+
         const m = menu.find(x => x.id == id);
-        const finalPrice = variant === 'special' ? m.price_special : m.price;
         
-        // สร้างชื่อเมนูแบบเต็ม (เช่น "หมูตุ๋น (พิเศษ) - เส้นเล็ก")
+        // คำนวณราคา (ราคาหลัก + ราคาเครื่องเคียง)
+        let finalPrice = variant === 'special' ? m.price_special : m.price;
+        let extrasText = "";
+        
+        extras.forEach(exName => {
+            const exOption = EXTRA_OPTIONS.find(e => e.name === exName);
+            if (exOption) {
+                finalPrice += exOption.price;
+                extrasText += ` +${exName}`;
+            }
+        });
+
+        // สร้างชื่อเมนูแบบเต็มๆ ส่งเข้าครัว
         let fullName = m.name;
         if (noodle && noodle !== 'none') fullName += ` [${noodle}]`;
         if (variant === 'special') fullName += ` (พิเศษ)`;
+        if (extrasText) fullName += extrasText;
 
         return { 
             id: m.id, 
-            name: fullName, // ส่งชื่อเต็มไปให้ครัว
+            name: fullName, 
             price: finalPrice, 
             quantity: cart[key] 
         };
@@ -106,20 +153,33 @@ function OrderPageContent() {
     await supabase.from('orders').insert([{ table_number: table.table_number, items, total_price: total, status: 'pending' }]);
     alert("✅ สั่งเรียบร้อย!");
     setCart({});
+    // รีเซ็ตตัวเลือกหลังจากสั่งเสร็จ (Optional)
+    setSelections({});
   };
 
-  // หมวดหมู่ (แปลไทย)
   const categories = ['Noodles', 'GaoLao', 'Sides'];
   const categoryNames = {'Noodles': '🍜 ก๋วยเตี๋ยว', 'GaoLao': '🍲 เกาเหลา', 'Sides': '🍚 ของทานเล่น/ข้าว'};
   const filteredMenu = useMemo(() => activeCategory === 'All' ? menu : menu.filter(m => m.category === activeCategory), [menu, activeCategory]);
   
+  // คำนวณยอดรวมในตะกร้า (ซับซ้อนขึ้นนิดนึง เพราะต้องบวกค่าท็อปปิ้ง)
   const totalItems = Object.values(cart).reduce((a, b) => a + b, 0);
   const totalPrice = Object.keys(cart).reduce((sum, key) => {
-    const [id, variant] = key.split('-');
+    const parts = key.split('-');
+    const id = parts[0];
+    const variant = parts[1];
+    const extrasStr = parts.slice(3).join('-');
+    const extras = extrasStr ? extrasStr.split(',') : [];
+
     const item = menu.find(m => m.id == id);
     if (!item) return sum;
-    const price = variant === 'special' ? item.price_special : item.price;
-    return sum + (price * cart[key]);
+
+    let pricePerUnit = variant === 'special' ? item.price_special : item.price;
+    extras.forEach(exName => {
+        const exOption = EXTRA_OPTIONS.find(e => e.name === exName);
+        if (exOption) pricePerUnit += exOption.price;
+    });
+
+    return sum + (pricePerUnit * cart[key]);
   }, 0);
 
   if (!tableId) return <div className="h-screen flex items-center justify-center text-gray-500">📷 สแกน QR Code ที่โต๊ะนะครับ</div>;
@@ -132,86 +192,88 @@ function OrderPageContent() {
          <h1 className="text-xl font-black text-orange-600">🍜 ก๋วยเตี๋ยวรสเด็ด <span className="text-gray-400 text-sm font-normal">| โต๊ะ {table.table_number}</span></h1>
       </div>
       
-      {/* หมวดหมู่ */}
       <div className="bg-white px-2 py-2 sticky top-[60px] z-20 shadow-sm flex gap-1 justify-center border-b border-gray-100">
-          {categories.map(cat => ( 
-             <button key={cat} onClick={() => setActiveCategory(cat)} 
-                className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${activeCategory === cat ? 'bg-orange-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>
-                {categoryNames[cat]}
-             </button> 
-          ))}
+          {categories.map(cat => ( <button key={cat} onClick={() => setActiveCategory(cat)} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${activeCategory === cat ? 'bg-orange-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>{categoryNames[cat]}</button> ))}
       </div>
       
       <div className="p-4 gap-4 flex flex-col">
         {filteredMenu.map((item) => { 
-            const currentNoodle = selectedNoodles[item.id] || '';
-            // นับจำนวนตามเส้นที่เลือกอยู่
-            const qtyNormal = cart[`${item.id}-normal-${currentNoodle || 'none'}`] || 0;
-            const qtySpecial = cart[`${item.id}-special-${currentNoodle || 'none'}`] || 0;
+            const sel = getSelection(item.id);
+            const extrasKey = sel.extras.sort().join(',');
+            // เช็คตะกร้า: ต้องตรงทั้ง ID, Variant, เส้น, และ ท็อปปิ้ง ถึงจะนับว่าเป็นตัวเดียวกัน
+            const cartKeyNormal = `${item.id}-normal-${sel.noodle || 'none'}-${extrasKey}`;
+            const cartKeySpecial = `${item.id}-special-${sel.noodle || 'none'}-${extrasKey}`;
+            
+            const qtyNormal = cart[cartKeyNormal] || 0;
+            const qtySpecial = cart[cartKeySpecial] || 0;
             const hasSpecial = item.price_special > 0;
+            const showOptions = item.category === 'Noodles' || item.category === 'GaoLao'; // โชว์ท็อปปิ้งเฉพาะเตี๋ยว/เกาเหลา
 
             return (
           <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
              <div className="flex justify-between items-start mb-2">
-                <div>
-                    <h3 className="font-black text-lg text-gray-800 leading-tight">{item.name}</h3>
-                    <p className="text-xs text-gray-400 mt-1">{categoryNames[item.category]}</p>
-                </div>
+                <div><h3 className="font-black text-lg text-gray-800 leading-tight">{item.name}</h3><p className="text-xs text-gray-400 mt-1">{categoryNames[item.category]}</p></div>
                 <div className="text-right">
                     <span className="block font-bold text-gray-800">{item.price}.-</span>
                     {hasSpecial && <span className="block text-xs text-orange-500 font-bold">พิเศษ {item.price_special}.-</span>}
                 </div>
              </div>
 
-             {/* Dropdown เลือกเส้น (เฉพาะหมวดก๋วยเตี๋ยว) */}
+             {/* 1. เลือกเส้น */}
              {item.category === 'Noodles' && (
                  <div className="mb-3">
-                     <select 
-                        className="w-full bg-orange-50 border border-orange-200 text-gray-700 text-sm rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-orange-500"
-                        value={selectedNoodles[item.id] || ''}
-                        onChange={(e) => handleNoodleChange(item.id, e.target.value)}
-                     >
+                     <select className="w-full bg-orange-50 border border-orange-200 text-gray-700 text-sm rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-orange-500"
+                        value={sel.noodle} onChange={(e) => handleNoodleChange(item.id, e.target.value)}>
                          <option value="" disabled>--- กรุณาเลือกเส้น ---</option>
                          {NOODLE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
                      </select>
                  </div>
              )}
 
-             {/* ปุ่มกด */}
-             <div className="grid grid-cols-2 gap-2 mt-2">
-                {/* ปุ่มธรรมดา */}
-                <div className="bg-gray-50 rounded-lg p-2 flex justify-between items-center border border-gray-200">
+             {/* 2. เลือกเครื่องเคียง (Checkbox) */}
+             {showOptions && (
+                 <div className="mb-3 flex flex-wrap gap-2">
+                    {EXTRA_OPTIONS.map((ex) => (
+                        <button 
+                            key={ex.name}
+                            onClick={() => handleExtraToggle(item.id, ex.name)}
+                            className={`px-3 py-1 rounded-full text-xs border transition-all ${
+                                sel.extras.includes(ex.name) 
+                                ? 'bg-green-100 border-green-500 text-green-700 font-bold' 
+                                : 'bg-white border-gray-300 text-gray-500'
+                            }`}
+                        >
+                            {sel.extras.includes(ex.name) ? '✅' : '+'} {ex.name} {ex.price > 0 && `(+${ex.price})`}
+                        </button>
+                    ))}
+                 </div>
+             )}
+
+             {/* 3. ปุ่มกดเลือก */}
+             <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-dashed">
+                <div className="flex justify-between items-center pr-2 border-r border-gray-100">
                     <span className="text-xs font-bold text-gray-600">ธรรมดา</span>
                     {qtyNormal > 0 ? (
-                        <div className="flex items-center gap-2">
-                            <button onClick={()=>removeFromCart(item, 'normal')} className="text-red-500 font-bold px-1">-</button>
+                        <div className="flex items-center gap-1 bg-gray-100 rounded-full px-1">
+                            <button onClick={()=>removeFromCart(item, 'normal')} className="text-red-500 font-bold px-2">-</button>
                             <span className="font-bold text-sm">{qtyNormal}</span>
-                            <button onClick={()=>addToCart(item, 'normal')} className="text-green-600 font-bold px-1">+</button>
+                            <button onClick={()=>addToCart(item, 'normal')} className="text-green-600 font-bold px-2">+</button>
                         </div>
-                    ) : (
-                        <button onClick={()=>addToCart(item, 'normal')} className="bg-gray-200 text-gray-600 px-3 py-1 rounded text-xs font-bold hover:bg-gray-300">เลือก</button>
-                    )}
+                    ) : ( <button onClick={()=>addToCart(item, 'normal')} className="bg-gray-200 text-gray-600 px-3 py-1 rounded text-xs font-bold hover:bg-gray-300">เลือก</button> )}
                 </div>
 
-                {/* ปุ่มพิเศษ */}
                 {hasSpecial ? (
-                    <div className="bg-orange-50 rounded-lg p-2 flex justify-between items-center border border-orange-200">
+                    <div className="flex justify-between items-center pl-2">
                         <span className="text-xs font-bold text-orange-600">พิเศษ</span>
                         {qtySpecial > 0 ? (
-                            <div className="flex items-center gap-2">
-                                <button onClick={()=>removeFromCart(item, 'special')} className="text-red-500 font-bold px-1">-</button>
+                            <div className="flex items-center gap-1 bg-orange-50 rounded-full px-1 border border-orange-100">
+                                <button onClick={()=>removeFromCart(item, 'special')} className="text-red-500 font-bold px-2">-</button>
                                 <span className="font-bold text-sm">{qtySpecial}</span>
-                                <button onClick={()=>addToCart(item, 'special')} className="text-green-600 font-bold px-1">+</button>
+                                <button onClick={()=>addToCart(item, 'special')} className="text-green-600 font-bold px-2">+</button>
                             </div>
-                        ) : (
-                            <button onClick={()=>addToCart(item, 'special')} className="bg-orange-200 text-orange-700 px-3 py-1 rounded text-xs font-bold hover:bg-orange-300">เลือก</button>
-                        )}
+                        ) : ( <button onClick={()=>addToCart(item, 'special')} className="bg-orange-200 text-orange-700 px-3 py-1 rounded text-xs font-bold hover:bg-orange-300">เลือก</button> )}
                     </div>
-                ) : (
-                    <div className="bg-gray-50 rounded-lg p-2 flex items-center justify-center text-xs text-gray-400 border border-gray-100">
-                        - ไม่มีพิเศษ -
-                    </div>
-                )}
+                ) : ( <div className="flex items-center justify-center text-xs text-gray-300">- ไม่มีพิเศษ -</div> )}
              </div>
           </div>
         )})}
