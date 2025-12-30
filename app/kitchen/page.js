@@ -18,61 +18,32 @@ export default function AdminPage() {
   const [menus, setMenus] = useState([]);
   const [newMenu, setNewMenu] = useState({ name: '', price: '', price_special: '', category: 'Noodles', image_url: '' });
   const [selectedOrderIds, setSelectedOrderIds] = useState(new Set());
+  const [filterDate, setFilterDate] = useState(new Date().toISOString().slice(0, 10));
 
-  useEffect(() => {
-    if (sessionStorage.getItem("admin_auth") === "true") setIsAuthenticated(true);
-  }, []);
-
-  const handleLogin = (e) => {
-    e.preventDefault();
-    if (pinInput === ADMIN_PIN) {
-        setIsAuthenticated(true);
-        sessionStorage.setItem("admin_auth", "true");
-    } else {
-        alert("รหัสผิด!"); setPinInput("");
-    }
-  };
+  useEffect(() => { if (sessionStorage.getItem("admin_auth") === "true") setIsAuthenticated(true); }, []);
+  const handleLogin = (e) => { e.preventDefault(); if (pinInput === ADMIN_PIN) { setIsAuthenticated(true); sessionStorage.setItem("admin_auth", "true"); } else { alert("รหัสผิด!"); setPinInput(""); } };
   const handleLogout = () => { setIsAuthenticated(false); sessionStorage.removeItem("admin_auth"); };
 
   const fetchData = async () => {
-    const { data: t } = await supabase.from('restaurant_tables').select('*').order('table_number');
-    if (t) setTables(t);
-    const { data: o } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+    const { data: t } = await supabase.from('restaurant_tables').select('*').order('table_number'); if (t) setTables(t);
+    const { data: m } = await supabase.from('restaurant_menus').select('*').order('id'); if (m) setMenus(m);
+    const startDate = `${filterDate} 00:00:00`; const endDate = `${filterDate} 23:59:59`;
+    const { data: o } = await supabase.from('orders').select('*').gte('created_at', startDate).lte('created_at', endDate).order('created_at', { ascending: false });
     if (o) setOrders(o);
-    const { data: m } = await supabase.from('restaurant_menus').select('*').order('id');
-    if (m) setMenus(m);
   };
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    fetchData();
-    const channel = supabase.channel('admin-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'restaurant_tables' }, fetchData)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [isAuthenticated]);
+  useEffect(() => { if (!isAuthenticated) return; fetchData(); const channel = supabase.channel('admin-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchData).on('postgres_changes', { event: '*', schema: 'public', table: 'restaurant_tables' }, fetchData).subscribe(); return () => supabase.removeChannel(channel); }, [isAuthenticated, filterDate]);
 
-  const handleOpenTable = async (id) => {
-    const customKey = prompt("ตั้งรหัสเข้าโต๊ะ (กด OK เพื่อสุ่ม):", Math.floor(1000 + Math.random() * 9000));
-    if (customKey) { await supabase.from('restaurant_tables').update({ status: 'occupied', session_key: customKey }).eq('id', id); fetchData(); }
-  };
+  const handleOpenTable = async (id) => { const customKey = prompt("ตั้งรหัสเข้าโต๊ะ:", Math.floor(1000 + Math.random() * 9000)); if (customKey) { await supabase.from('restaurant_tables').update({ status: 'occupied', session_key: customKey }).eq('id', id); fetchData(); } };
   const handleCloseTable = async (id) => { if(confirm("ปิดโต๊ะ?")) await supabase.from('restaurant_tables').update({ status: 'available', session_key: null }).eq('id', id); fetchData(); };
   const addTable = async () => { const next = tables.length > 0 ? Math.max(...tables.map(t => t.table_number)) + 1 : 1; await supabase.from('restaurant_tables').insert([{ table_number: next, status: 'available' }]); fetchData(); };
-  const handleAddMenu = async (e) => { 
-      e.preventDefault(); 
-      const payload = { ...newMenu, price_special: newMenu.price_special ? newMenu.price_special : null };
-      const { error } = await supabase.from('restaurant_menus').insert([payload]); 
-      if (error) alert("Error: " + error.message);
-      else { setNewMenu({ name: '', price: '', price_special: '', category: 'Noodles', image_url: '' }); fetchData(); }
-  };
+  const handleAddMenu = async (e) => { e.preventDefault(); const payload = { ...newMenu, price_special: newMenu.price_special ? newMenu.price_special : null }; const { error } = await supabase.from('restaurant_menus').insert([payload]); if (error) alert("Error: " + error.message); else { setNewMenu({ name: '', price: '', price_special: '', category: 'Noodles', image_url: '' }); fetchData(); } };
   const deleteMenu = async (id) => { if(confirm("ลบเมนูนี้?")) await supabase.from('restaurant_menus').delete().eq('id', id); fetchData(); };
-
   const toggleSelectOrder = (id) => { const newSelected = new Set(selectedOrderIds); if (newSelected.has(id)) newSelected.delete(id); else newSelected.add(id); setSelectedOrderIds(newSelected); };
   const toggleSelectAll = () => { if (selectedOrderIds.size === orders.length) setSelectedOrderIds(new Set()); else setSelectedOrderIds(new Set(orders.map(o => o.id))); };
   const deleteSelectedOrders = async () => { const ids = Array.from(selectedOrderIds); if (ids.length === 0) return; if (!confirm(`ลบ ${ids.length} รายการ?`)) return; await supabase.from('orders').delete().in('id', ids); setSelectedOrderIds(new Set()); fetchData(); };
   const updateOrder = async (id, status) => { await supabase.from('orders').update({ status }).eq('id', id); fetchData(); };
-  const exportToTxt = () => { if (orders.length === 0) return; let content = "Order Report\n==========\n"; orders.forEach(o => { content += `Table ${o.table_number}: ${o.total_price}B\n`; }); const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([content], {type:'text/plain'})); link.download = 'orders.txt'; link.click(); };
+  const exportToTxt = () => { if (orders.length === 0) return; let content = `Order Report (${filterDate})\n==========\n`; orders.forEach(o => { content += `Table ${o.table_number}: ${o.total_price}B\n`; }); const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([content], {type:'text/plain'})); link.download = `orders_${filterDate}.txt`; link.click(); };
 
   if (!isAuthenticated) return ( <div className="min-h-screen bg-[#0f172a] flex items-center justify-center"><div className="bg-gray-800 p-8 rounded-xl text-center"><h1 className="text-white text-2xl mb-4">Admin Login</h1><form onSubmit={handleLogin}><input type="password" value={pinInput} onChange={e=>setPinInput(e.target.value)} className="p-2 rounded text-center text-black w-full mb-2" placeholder="PIN" autoFocus/><button className="w-full bg-blue-600 text-white p-2 rounded">เข้าสู่ระบบ</button></form></div></div> );
 
@@ -136,11 +107,16 @@ export default function AdminPage() {
 
       {activeTab === 'orders' && (
         <div className="animate-fade-in">
-           <div className="flex justify-between items-center mb-4 bg-gray-800 p-3 rounded-xl">
-              <h2 className="font-bold">ออเดอร์ ({orders.length})</h2>
-              <div className="flex gap-2"><button onClick={toggleSelectAll} className="px-3 py-1 bg-gray-700 rounded text-xs">เลือกทั้งหมด</button>{selectedOrderIds.size > 0 && <button onClick={deleteSelectedOrders} className="px-3 py-1 bg-red-600 rounded text-xs animate-pulse">ลบ {selectedOrderIds.size} รายการ</button>}<button onClick={exportToTxt} className="px-3 py-1 bg-green-600 rounded text-xs">Export</button></div>
+           <div className="flex flex-col md:flex-row justify-between items-center mb-4 bg-gray-800 p-4 rounded-xl gap-4">
+              <div className="flex items-center gap-4">
+                  <h2 className="font-bold text-lg">ออเดอร์ ({orders.length})</h2>
+                  <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="bg-gray-900 border border-gray-600 text-white px-3 py-1 rounded font-bold outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex gap-2"><button onClick={toggleSelectAll} className="px-3 py-1 bg-gray-700 rounded text-xs hover:bg-gray-600">เลือกทั้งหมด</button>{selectedOrderIds.size > 0 && <button onClick={deleteSelectedOrders} className="px-3 py-1 bg-red-600 rounded text-xs animate-pulse hover:bg-red-500">ลบ {selectedOrderIds.size} รายการ</button>}<button onClick={exportToTxt} className="px-3 py-1 bg-green-600 rounded text-xs hover:bg-green-500">Export</button></div>
            </div>
+
            <div className="space-y-3">
+             {orders.length === 0 && <div className="text-center py-10 text-gray-500">ไม่มีออเดอร์ในวันที่เลือก</div>}
              {orders.map((o) => (
                <div key={o.id} className={`bg-gray-800 p-4 rounded-xl border flex flex-col md:flex-row gap-4 ${selectedOrderIds.has(o.id) ? 'border-blue-500 bg-blue-900/20' : 'border-gray-700'}`}>
                  <div className="flex items-center"><input type="checkbox" checked={selectedOrderIds.has(o.id)} onChange={() => toggleSelectOrder(o.id)} className="w-5 h-5 accent-blue-500"/></div>
@@ -148,17 +124,23 @@ export default function AdminPage() {
                      <div className="flex justify-between border-b border-gray-700 pb-2 mb-2">
                          <div className="flex items-center gap-2">
                              <span className="font-bold text-orange-400 text-lg">โต๊ะ {o.table_number}</span>
+                             {o.order_type === 'takeaway' && <span className="bg-red-500 text-white px-2 py-0.5 rounded text-xs font-bold border border-red-400">🛍️ กลับบ้าน</span>}
+                             
+                             {/* 🔥 แสดงสถานะการจ่ายเงิน */}
+                             <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wide ${o.payment_status === 'paid_slip_attached' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500'}`}>
+                                {o.payment_status === 'paid_slip_attached' ? '💸 จ่ายแล้ว' : 'รอจ่าย'}
+                             </span>
+
+                             {o.location_lat && o.location_lng && (<a href={`https://www.google.com/maps/search/?api=1&query=${o.location_lat},${o.location_lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded text-xs border border-blue-500/30 hover:bg-blue-800">📍 ดูตำแหน่ง</a>)}
                          </div>
-                         <span className={`text-xs px-2 rounded ${o.status==='pending'?'bg-yellow-600':o.status==='completed'?'bg-green-600':'bg-blue-600'}`}>{o.status}</span>
+                         <div className="flex flex-col items-end">
+                            <span className={`text-xs px-2 rounded ${o.status==='pending'?'bg-yellow-600':o.status==='completed'?'bg-green-600':'bg-blue-600'}`}>{o.status}</span>
+                            <span className="text-[10px] text-gray-500 mt-1">{new Date(o.created_at).toLocaleTimeString('th-TH')}</span>
+                         </div>
                      </div>
                      {o.items.map((i,idx)=>(
                          <div key={idx} className="flex justify-between text-sm text-gray-300">
-                             <span>
-                                {i.name} {i.variant && <span className="text-yellow-400">({i.variant})</span>}
-                                {/* 🔥 แสดงป้ายกลับบ้าน */}
-                                {i.is_takeaway && <span className="ml-2 text-red-400 font-bold border border-red-500/50 px-1 rounded text-xs">🛍️ กลับบ้าน</span>}
-                                <span className="text-gray-500 ml-1">x{i.quantity}</span>
-                             </span>
+                             <span>{i.name} {i.variant && <span className="text-yellow-400">({i.variant})</span>} {i.is_takeaway && <span className="ml-2 text-red-400 font-bold px-1 rounded text-xs">🛍️</span>}<span className="text-gray-500 ml-1">x{i.quantity}</span></span>
                              <span>{i.price*i.quantity}</span>
                          </div>
                      ))}
