@@ -13,10 +13,18 @@ export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState("");
   const [activeTab, setActiveTab] = useState('orders');
+  
+  // Data States
   const [tables, setTables] = useState([]);
   const [orders, setOrders] = useState([]);
   const [menus, setMenus] = useState([]);
-  const [newMenu, setNewMenu] = useState({ name: '', price: '', price_special: '', category: 'Noodles', image_url: '' });
+  
+  // Menu Form States
+  const initialMenuState = { name: '', price: '', price_special: '', category: 'Noodles', image_url: '', is_available: true };
+  const [newMenu, setNewMenu] = useState(initialMenuState);
+  const [editingId, setEditingId] = useState(null); // 🔥 เอาไว้เช็คว่ากำลังแก้เมนูไหนอยู่
+
+  // Order Selection & Filter
   const [selectedOrderIds, setSelectedOrderIds] = useState(new Set());
   const [filterDate, setFilterDate] = useState(new Date().toISOString().slice(0, 10));
 
@@ -34,16 +42,61 @@ export default function AdminPage() {
 
   useEffect(() => { if (!isAuthenticated) return; fetchData(); const channel = supabase.channel('admin-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchData).on('postgres_changes', { event: '*', schema: 'public', table: 'restaurant_tables' }, fetchData).subscribe(); return () => supabase.removeChannel(channel); }, [isAuthenticated, filterDate]);
 
+  // --- Table & Order Functions (เหมือนเดิม) ---
   const handleOpenTable = async (id) => { const customKey = prompt("ตั้งรหัสเข้าโต๊ะ:", Math.floor(1000 + Math.random() * 9000)); if (customKey) { await supabase.from('restaurant_tables').update({ status: 'occupied', session_key: customKey }).eq('id', id); fetchData(); } };
   const handleCloseTable = async (id) => { if(confirm("ปิดโต๊ะ?")) await supabase.from('restaurant_tables').update({ status: 'available', session_key: null }).eq('id', id); fetchData(); };
   const addTable = async () => { const next = tables.length > 0 ? Math.max(...tables.map(t => t.table_number)) + 1 : 1; await supabase.from('restaurant_tables').insert([{ table_number: next, status: 'available' }]); fetchData(); };
-  const handleAddMenu = async (e) => { e.preventDefault(); const payload = { ...newMenu, price_special: newMenu.price_special ? newMenu.price_special : null }; const { error } = await supabase.from('restaurant_menus').insert([payload]); if (error) alert("Error: " + error.message); else { setNewMenu({ name: '', price: '', price_special: '', category: 'Noodles', image_url: '' }); fetchData(); } };
-  const deleteMenu = async (id) => { if(confirm("ลบเมนูนี้?")) await supabase.from('restaurant_menus').delete().eq('id', id); fetchData(); };
   const toggleSelectOrder = (id) => { const newSelected = new Set(selectedOrderIds); if (newSelected.has(id)) newSelected.delete(id); else newSelected.add(id); setSelectedOrderIds(newSelected); };
   const toggleSelectAll = () => { if (selectedOrderIds.size === orders.length) setSelectedOrderIds(new Set()); else setSelectedOrderIds(new Set(orders.map(o => o.id))); };
   const deleteSelectedOrders = async () => { const ids = Array.from(selectedOrderIds); if (ids.length === 0) return; if (!confirm(`ลบ ${ids.length} รายการ?`)) return; await supabase.from('orders').delete().in('id', ids); setSelectedOrderIds(new Set()); fetchData(); };
   const updateOrder = async (id, status) => { await supabase.from('orders').update({ status }).eq('id', id); fetchData(); };
   const exportToTxt = () => { if (orders.length === 0) return; let content = `Order Report (${filterDate})\n==========\n`; orders.forEach(o => { content += `Table ${o.table_number}: ${o.total_price}B\n`; }); const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([content], {type:'text/plain'})); link.download = `orders_${filterDate}.txt`; link.click(); };
+
+  // --- 🔥 MENU FUNCTIONS (อัปเกรดใหม่) ---
+  
+  // 1. บันทึก (แยกเคส เพิ่มใหม่ vs แก้ไข)
+  const handleSaveMenu = async (e) => {
+      e.preventDefault();
+      const payload = { ...newMenu, price_special: newMenu.price_special ? newMenu.price_special : null };
+      
+      if (editingId) {
+          // กรณีแก้ไข
+          const { error } = await supabase.from('restaurant_menus').update(payload).eq('id', editingId);
+          if (error) alert("Error: " + error.message);
+      } else {
+          // กรณีเพิ่มใหม่
+          const { error } = await supabase.from('restaurant_menus').insert([payload]);
+          if (error) alert("Error: " + error.message);
+      }
+      
+      // Reset ฟอร์ม
+      setNewMenu(initialMenuState);
+      setEditingId(null);
+      fetchData();
+  };
+
+  // 2. กดปุ่มแก้ไข (ดึงข้อมูลมาใส่ฟอร์ม)
+  const startEditMenu = (menuItem) => {
+      setNewMenu(menuItem);
+      setEditingId(menuItem.id);
+      window.scrollTo({ top: 0, behavior: 'smooth' }); // เลื่อนขึ้นไปหาฟอร์ม
+  };
+
+  // 3. ยกเลิกการแก้ไข
+  const cancelEdit = () => {
+      setNewMenu(initialMenuState);
+      setEditingId(null);
+  };
+
+  // 4. สวิตช์ เปิด/ปิด เมนู (On/Off)
+  const toggleMenuAvailability = async (id, currentStatus) => {
+      await supabase.from('restaurant_menus').update({ is_available: !currentStatus }).eq('id', id);
+      fetchData();
+  };
+
+  // 5. ลบเมนู
+  const deleteMenu = async (id) => { if(confirm("ลบเมนูนี้ถาวร?")) await supabase.from('restaurant_menus').delete().eq('id', id); fetchData(); };
+
 
   if (!isAuthenticated) return ( <div className="min-h-screen bg-[#0f172a] flex items-center justify-center"><div className="bg-gray-800 p-8 rounded-xl text-center"><h1 className="text-white text-2xl mb-4">Admin Login</h1><form onSubmit={handleLogin}><input type="password" value={pinInput} onChange={e=>setPinInput(e.target.value)} className="p-2 rounded text-center text-black w-full mb-2" placeholder="PIN" autoFocus/><button className="w-full bg-blue-600 text-white p-2 rounded">เข้าสู่ระบบ</button></form></div></div> );
 
@@ -61,28 +114,54 @@ export default function AdminPage() {
 
       {activeTab === 'menu' && (
         <div className="animate-fade-in max-w-5xl mx-auto">
-           <div className="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-lg mb-8">
-             <h3 className="text-gray-300 font-bold mb-4 flex items-center gap-2">📝 เพิ่มเมนูใหม่</h3>
-             <form onSubmit={handleAddMenu} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+           {/* ฟอร์มเพิ่ม/แก้ไขเมนู */}
+           <div className={`p-6 rounded-2xl border shadow-lg mb-8 transition-colors ${editingId ? 'bg-blue-900/30 border-blue-500' : 'bg-gray-800 border-gray-700'}`}>
+             <h3 className={`font-bold mb-4 flex items-center gap-2 ${editingId ? 'text-blue-300' : 'text-gray-300'}`}>
+                 {editingId ? '✏️ แก้ไขเมนู' : '📝 เพิ่มเมนูใหม่'}
+             </h3>
+             <form onSubmit={handleSaveMenu} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
                 <div className="md:col-span-2"><label className="text-xs text-gray-400 mb-1 block">ชื่อเมนู</label><input className="w-full bg-gray-900 border border-gray-600 text-white px-3 py-2 rounded focus:border-blue-500 outline-none" placeholder="เช่น เส้นเล็กน้ำตก" value={newMenu.name} onChange={e=>setNewMenu({...newMenu, name: e.target.value})} required /></div>
                 <div className="md:col-span-1"><label className="text-xs text-gray-400 mb-1 block">ราคาปกติ</label><input type="number" className="w-full bg-gray-900 border border-gray-600 text-white px-3 py-2 rounded focus:border-blue-500 outline-none" placeholder="0" value={newMenu.price} onChange={e=>setNewMenu({...newMenu, price: e.target.value})} required /></div>
-                <div className="md:col-span-1"><label className="text-xs text-yellow-400 mb-1 block">ราคาพิเศษ (ถ้ามี)</label><input type="number" className="w-full bg-gray-900 border border-yellow-600/50 text-white px-3 py-2 rounded focus:border-yellow-500 outline-none" placeholder="0" value={newMenu.price_special} onChange={e=>setNewMenu({...newMenu, price_special: e.target.value})} /></div>
+                <div className="md:col-span-1"><label className="text-xs text-yellow-400 mb-1 block">ราคาพิเศษ (ถ้ามี)</label><input type="number" className="w-full bg-gray-900 border border-yellow-600/50 text-white px-3 py-2 rounded focus:border-yellow-500 outline-none" placeholder="0" value={newMenu.price_special || ''} onChange={e=>setNewMenu({...newMenu, price_special: e.target.value})} /></div>
                 <div className="md:col-span-1"><label className="text-xs text-gray-400 mb-1 block">หมวดหมู่</label><select className="w-full bg-gray-900 border border-gray-600 text-white px-3 py-2 rounded focus:border-blue-500 outline-none" value={newMenu.category} onChange={e=>setNewMenu({...newMenu, category: e.target.value})}><option value="Noodles">🍜 ก๋วยเตี๋ยว</option><option value="GaoLao">🍲 เกาเหลา</option><option value="Sides">🍚 ของทานเล่น/ข้าว</option><option value="Drinks">🥤 เครื่องดื่ม</option></select></div>
-                <div className="md:col-span-1"><button type="submit" className="w-full bg-green-600 hover:bg-green-500 text-white py-2 rounded-lg font-bold shadow-lg transition-transform active:scale-95 h-[42px]">+ เพิ่ม</button></div>
-                <div className="md:col-span-6 mt-2"><input className="w-full bg-gray-900 border border-gray-700 text-gray-400 text-sm px-3 py-2 rounded" placeholder="ลิ้งค์รูปภาพ (URL)" value={newMenu.image_url} onChange={e=>setNewMenu({...newMenu, image_url: e.target.value})} /></div>
+                
+                <div className="md:col-span-1 flex gap-2">
+                    <button type="submit" className={`flex-1 py-2 rounded-lg font-bold shadow-lg transition-transform active:scale-95 h-[42px] ${editingId ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'}`}>
+                        {editingId ? 'บันทึก' : '+ เพิ่ม'}
+                    </button>
+                    {editingId && <button type="button" onClick={cancelEdit} className="px-3 bg-gray-600 rounded-lg text-white hover:bg-gray-500">ยกเลิก</button>}
+                </div>
+                
+                <div className="md:col-span-6 mt-2"><input className="w-full bg-gray-900 border border-gray-700 text-gray-400 text-sm px-3 py-2 rounded" placeholder="ลิ้งค์รูปภาพ (URL)" value={newMenu.image_url || ''} onChange={e=>setNewMenu({...newMenu, image_url: e.target.value})} /></div>
              </form>
            </div>
+
+           {/* ตารางแสดงรายการเมนู */}
            <div className="bg-gray-800 rounded-xl overflow-hidden border border-gray-700">
              <table className="w-full text-left border-collapse">
-               <thead><tr className="bg-gray-900 text-gray-400 text-xs uppercase border-b border-gray-700"><th className="px-4 py-3">รูป</th><th className="px-4 py-3">ชื่อเมนู</th><th className="px-4 py-3">หมวดหมู่</th><th className="px-4 py-3">ราคา</th><th className="px-4 py-3 text-right">จัดการ</th></tr></thead>
+               <thead><tr className="bg-gray-900 text-gray-400 text-xs uppercase border-b border-gray-700"><th className="px-4 py-3">รูป</th><th className="px-4 py-3">ชื่อเมนู</th><th className="px-4 py-3">หมวดหมู่</th><th className="px-4 py-3">ราคา</th><th className="px-4 py-3 text-center">สถานะ</th><th className="px-4 py-3 text-right">จัดการ</th></tr></thead>
                <tbody>
                  {menus.map((m) => (
-                   <tr key={m.id} className="hover:bg-gray-700/50 border-b border-gray-700 last:border-0 transition-colors">
+                   <tr key={m.id} className={`border-b border-gray-700 last:border-0 transition-colors ${m.is_available ? 'hover:bg-gray-700/50' : 'bg-red-900/10 opacity-60'}`}>
                       <td className="px-4 py-3 w-16"><div className="w-10 h-10 bg-gray-700 rounded overflow-hidden flex items-center justify-center">{m.image_url ? <img src={m.image_url} className="w-full h-full object-cover"/> : "🍽️"}</div></td>
                       <td className="px-4 py-3 font-medium">{m.name}</td>
                       <td className="px-4 py-3"><span className="text-xs px-2 py-1 rounded bg-gray-700 border border-gray-600 text-gray-300">{m.category}</span></td>
-                      <td className="px-4 py-3"><div className="flex flex-col text-sm"><span className="text-gray-300">ธรรมดา: {m.price}</span>{m.price_special && <span className="text-yellow-400 font-bold">พิเศษ: {m.price_special}</span>}</div></td>
-                      <td className="px-4 py-3 text-right"><button onClick={() => deleteMenu(m.id)} className="text-red-400 border border-red-500/30 px-3 py-1 rounded text-xs">ลบ</button></td>
+                      <td className="px-4 py-3"><div className="flex flex-col text-sm"><span className="text-gray-300">ธ: {m.price}</span>{m.price_special && <span className="text-yellow-400 font-bold">พ: {m.price_special}</span>}</div></td>
+                      
+                      {/* 🔥 ปุ่ม Toggle เปิด/ปิด เมนู */}
+                      <td className="px-4 py-3 text-center">
+                          <button onClick={() => toggleMenuAvailability(m.id, m.is_available)} className={`px-3 py-1 rounded-full text-xs font-bold border transition-all ${m.is_available ? 'bg-green-900/30 text-green-400 border-green-700 hover:bg-green-900/50' : 'bg-red-900/30 text-red-400 border-red-700 hover:bg-red-900/50'}`}>
+                              {m.is_available ? 'ขายอยู่ ✅' : 'หมด ❌'}
+                          </button>
+                      </td>
+
+                      {/* 🔥 ปุ่มแก้ไข & ลบ */}
+                      <td className="px-4 py-3 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button onClick={() => startEditMenu(m)} className="text-blue-400 border border-blue-500/30 px-3 py-1 rounded text-xs hover:bg-blue-900/30">แก้ไข</button>
+                            <button onClick={() => deleteMenu(m.id)} className="text-red-400 border border-red-500/30 px-3 py-1 rounded text-xs hover:bg-red-900/30">ลบ</button>
+                          </div>
+                      </td>
                    </tr>
                  ))}
                </tbody>
@@ -91,6 +170,7 @@ export default function AdminPage() {
         </div>
       )}
 
+      {/* (ส่วน Tables และ Orders เหมือนเดิม) */}
       {activeTab === 'tables' && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-fade-in">
           {tables.map((t) => (
@@ -114,44 +194,28 @@ export default function AdminPage() {
               </div>
               <div className="flex gap-2"><button onClick={toggleSelectAll} className="px-3 py-1 bg-gray-700 rounded text-xs hover:bg-gray-600">เลือกทั้งหมด</button>{selectedOrderIds.size > 0 && <button onClick={deleteSelectedOrders} className="px-3 py-1 bg-red-600 rounded text-xs animate-pulse hover:bg-red-500">ลบ {selectedOrderIds.size} รายการ</button>}<button onClick={exportToTxt} className="px-3 py-1 bg-green-600 rounded text-xs hover:bg-green-500">Export</button></div>
            </div>
-
            <div className="space-y-3">
              {orders.length === 0 && <div className="text-center py-10 text-gray-500">ไม่มีออเดอร์ในวันที่เลือก</div>}
              {orders.map((o) => (
                <div key={o.id} className={`bg-gray-800 p-4 rounded-xl border flex flex-col md:flex-row gap-4 ${selectedOrderIds.has(o.id) ? 'border-blue-500 bg-blue-900/20' : 'border-gray-700'}`}>
                  <div className="flex items-center"><input type="checkbox" checked={selectedOrderIds.has(o.id)} onChange={() => toggleSelectOrder(o.id)} className="w-5 h-5 accent-blue-500"/></div>
                  <div className="flex-1">
-                     
-                     {/* 🔥 HEADER: โต๊ะ + สถานะจ่าย + เวลา (แบบใหม่ ใหญ่สะใจ!) */}
                      <div className="flex justify-between border-b border-gray-700 pb-2 mb-2">
                          <div className="flex items-center gap-3">
                              <span className="font-bold text-orange-400 text-2xl">โต๊ะ {o.table_number}</span>
-                             
                              {o.order_type === 'takeaway' && <span className="bg-red-500 text-white px-2 py-1 rounded text-xs font-bold border border-red-400">🛍️ กลับบ้าน</span>}
-                             
-                             <span className={`text-xs px-2 py-1 rounded font-bold uppercase tracking-wide ${o.payment_status === 'paid_slip_attached' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500'}`}>
-                                {o.payment_status === 'paid_slip_attached' ? '💸 จ่ายแล้ว' : 'รอจ่าย'}
-                             </span>
-
-                             {o.location_lat && o.location_lng && (<a href={`https://www.google.com/maps/search/?api=1&query=${o.location_lat},${o.location_lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 bg-blue-900/50 text-blue-300 px-2 py-1 rounded text-xs border border-blue-500/30 hover:bg-blue-800">📍 ดูพิกัด</a>)}
+                             <span className={`text-xs px-2 py-1 rounded font-bold uppercase tracking-wide ${o.payment_status === 'paid_slip_attached' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500'}`}>{o.payment_status === 'paid_slip_attached' ? '💸 จ่ายแล้ว' : 'รอจ่าย'}</span>
+                             {o.slip_url && (<a href={o.slip_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 bg-green-800 text-green-200 px-3 py-1 rounded font-bold text-sm hover:bg-green-700 transition-colors border border-green-600">📄 ดูสลิป</a>)}
+                             {o.location_lat && o.location_lng && (<a href={`https://www.google.com/maps/search/?api=1&query=${o.location_lat},${o.location_lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 bg-blue-900/50 text-blue-300 px-2 py-1 rounded text-xs border border-blue-500/30 hover:bg-blue-800">📍 พิกัด</a>)}
                          </div>
-
-                         {/* 🔥 ปรับเวลาให้ใหญ่ขึ้น + มีสถานะออเดอร์ */}
                          <div className="flex items-center gap-3">
-                            <div className="text-xl font-mono font-bold text-yellow-400 bg-gray-900 px-3 py-1 rounded border border-gray-600 shadow-inner flex items-center gap-2">
-                                <span>🕒</span>
-                                {new Date(o.created_at).toLocaleTimeString('th-TH')}
-                            </div>
+                            <div className="text-xl font-mono font-bold text-yellow-400 bg-gray-900 px-3 py-1 rounded border border-gray-600 shadow-inner flex items-center gap-2"><span>🕒</span>{new Date(o.created_at).toLocaleTimeString('th-TH')}</div>
                             <span className={`text-sm px-3 py-1 rounded font-bold uppercase ${o.status==='pending'?'bg-yellow-600':o.status==='completed'?'bg-green-600':'bg-blue-600'}`}>{o.status}</span>
                          </div>
                      </div>
-
                      {o.items.map((i,idx)=>(
                          <div key={idx} className="flex justify-between text-base text-gray-300 py-1">
-                             <span>
-                                {i.name} {i.variant && <span className="text-yellow-400">({i.variant})</span>} {i.is_takeaway && <span className="ml-2 text-red-400 font-bold px-1 rounded text-xs">🛍️</span>}
-                                <span className="text-gray-500 ml-1">x{i.quantity}</span>
-                             </span>
+                             <span>{i.name} {i.variant && <span className="text-yellow-400">({i.variant})</span>} {i.is_takeaway && <span className="ml-2 text-red-400 font-bold px-1 rounded text-xs">🛍️</span>}<span className="text-gray-500 ml-1">x{i.quantity}</span></span>
                              <span>{i.price*i.quantity}</span>
                          </div>
                      ))}
