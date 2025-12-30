@@ -121,35 +121,46 @@ export default function AdminPage() {
                <div key={o.id} className={`bg-gray-800 p-4 rounded-xl border flex flex-col md:flex-row gap-4 ${selectedOrderIds.has(o.id) ? 'border-blue-500 bg-blue-900/20' : 'border-gray-700'}`}>
                  <div className="flex items-center"><input type="checkbox" checked={selectedOrderIds.has(o.id)} onChange={() => toggleSelectOrder(o.id)} className="w-5 h-5 accent-blue-500"/></div>
                  <div className="flex-1">
+                     
+                     {/* 🔥 HEADER: โต๊ะ + สถานะจ่าย + เวลา (แบบใหม่ ใหญ่สะใจ!) */}
                      <div className="flex justify-between border-b border-gray-700 pb-2 mb-2">
-                         <div className="flex items-center gap-2">
-                             <span className="font-bold text-orange-400 text-lg">โต๊ะ {o.table_number}</span>
-                             {o.order_type === 'takeaway' && <span className="bg-red-500 text-white px-2 py-0.5 rounded text-xs font-bold border border-red-400">🛍️ กลับบ้าน</span>}
+                         <div className="flex items-center gap-3">
+                             <span className="font-bold text-orange-400 text-2xl">โต๊ะ {o.table_number}</span>
                              
-                             {/* 🔥 แสดงสถานะการจ่ายเงิน */}
-                             <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wide ${o.payment_status === 'paid_slip_attached' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500'}`}>
+                             {o.order_type === 'takeaway' && <span className="bg-red-500 text-white px-2 py-1 rounded text-xs font-bold border border-red-400">🛍️ กลับบ้าน</span>}
+                             
+                             <span className={`text-xs px-2 py-1 rounded font-bold uppercase tracking-wide ${o.payment_status === 'paid_slip_attached' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500'}`}>
                                 {o.payment_status === 'paid_slip_attached' ? '💸 จ่ายแล้ว' : 'รอจ่าย'}
                              </span>
 
-                             {o.location_lat && o.location_lng && (<a href={`https://www.google.com/maps/search/?api=1&query=${o.location_lat},${o.location_lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded text-xs border border-blue-500/30 hover:bg-blue-800">📍 ดูตำแหน่ง</a>)}
+                             {o.location_lat && o.location_lng && (<a href={`https://www.google.com/maps/search/?api=1&query=${o.location_lat},${o.location_lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 bg-blue-900/50 text-blue-300 px-2 py-1 rounded text-xs border border-blue-500/30 hover:bg-blue-800">📍 ดูพิกัด</a>)}
                          </div>
-                         <div className="flex flex-col items-end">
-                            <span className={`text-xs px-2 rounded ${o.status==='pending'?'bg-yellow-600':o.status==='completed'?'bg-green-600':'bg-blue-600'}`}>{o.status}</span>
-                            <span className="text-[10px] text-gray-500 mt-1">{new Date(o.created_at).toLocaleTimeString('th-TH')}</span>
+
+                         {/* 🔥 ปรับเวลาให้ใหญ่ขึ้น + มีสถานะออเดอร์ */}
+                         <div className="flex items-center gap-3">
+                            <div className="text-xl font-mono font-bold text-yellow-400 bg-gray-900 px-3 py-1 rounded border border-gray-600 shadow-inner flex items-center gap-2">
+                                <span>🕒</span>
+                                {new Date(o.created_at).toLocaleTimeString('th-TH')}
+                            </div>
+                            <span className={`text-sm px-3 py-1 rounded font-bold uppercase ${o.status==='pending'?'bg-yellow-600':o.status==='completed'?'bg-green-600':'bg-blue-600'}`}>{o.status}</span>
                          </div>
                      </div>
+
                      {o.items.map((i,idx)=>(
-                         <div key={idx} className="flex justify-between text-sm text-gray-300">
-                             <span>{i.name} {i.variant && <span className="text-yellow-400">({i.variant})</span>} {i.is_takeaway && <span className="ml-2 text-red-400 font-bold px-1 rounded text-xs">🛍️</span>}<span className="text-gray-500 ml-1">x{i.quantity}</span></span>
+                         <div key={idx} className="flex justify-between text-base text-gray-300 py-1">
+                             <span>
+                                {i.name} {i.variant && <span className="text-yellow-400">({i.variant})</span>} {i.is_takeaway && <span className="ml-2 text-red-400 font-bold px-1 rounded text-xs">🛍️</span>}
+                                <span className="text-gray-500 ml-1">x{i.quantity}</span>
+                             </span>
                              <span>{i.price*i.quantity}</span>
                          </div>
                      ))}
-                     <div className="text-right mt-2 font-bold text-green-400">รวม: {o.total_price}.-</div>
+                     <div className="text-right mt-2 font-bold text-green-400 text-lg">รวม: {o.total_price}.-</div>
                  </div>
                  <div className="flex flex-col gap-2 justify-center">
-                    {o.status==='pending' && <button onClick={()=>updateOrder(o.id,'cooking')} className="bg-yellow-600 py-1 px-3 rounded text-sm">รับออเดอร์</button>}
-                    {o.status==='cooking' && <button onClick={()=>updateOrder(o.id,'served')} className="bg-blue-600 py-1 px-3 rounded text-sm">เสิร์ฟ</button>}
-                    {o.status==='served' && <button onClick={()=>updateOrder(o.id,'completed')} className="bg-green-600 py-1 px-3 rounded text-sm">จบงาน</button>}
+                    {o.status==='pending' && <button onClick={()=>updateOrder(o.id,'cooking')} className="bg-yellow-600 py-1 px-3 rounded text-sm font-bold h-full">รับออเดอร์</button>}
+                    {o.status==='cooking' && <button onClick={()=>updateOrder(o.id,'served')} className="bg-blue-600 py-1 px-3 rounded text-sm font-bold h-full">เสิร์ฟ</button>}
+                    {o.status==='served' && <button onClick={()=>updateOrder(o.id,'completed')} className="bg-green-600 py-1 px-3 rounded text-sm font-bold h-full">จบงาน</button>}
                  </div>
                </div>
              ))}
