@@ -3,14 +3,13 @@ import { useEffect, useState, Suspense, useMemo } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { useSearchParams } from "next/navigation";
 
-// 🔥 1. ตั้งค่าพิกัดร้าน (ตามที่คุณขอมา)
+// 🔥 1. พิกัดร้าน (ใส่ไว้เหมือนเดิม แต่ไม่มีผลต่อการบล็อกแล้ว)
 const SHOP_LOCATION = {
   lat: 18.476304, 
   lng: 100.188412
 };
 
-// 🔥 2. ระยะที่ยอมให้สั่งได้ (12 เมตร)
-// คำเตือน: 12 เมตรแคบมาก ถ้าลูกค้า GPS ไม่ดีอาจจะสั่งไม่ได้ ให้ลองขยับเป็น 20-30 ถ้าเจอปัญหา
+// 🔥 2. ระยะที่ยอมให้สั่ง (ตั้งไว้เล่นๆ ในโหมดทดสอบ)
 const ALLOWED_DISTANCE_METERS = 12; 
 
 const supabase = createClient(
@@ -27,7 +26,7 @@ const EXTRA_OPTIONS = [
   { name: "ไม่ใส่ผักโรย", price: 0 }
 ];
 
-// ฟังก์ชันคำนวณระยะทาง (Haversine Formula)
+// ฟังก์ชันคำนวณระยะทาง
 function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
   var R = 6371; 
   var dLat = deg2rad(lat2 - lat1);
@@ -57,52 +56,34 @@ function OrderPageContent() {
   const [isOrdering, setIsOrdering] = useState(false);
   const [showCartDetail, setShowCartDetail] = useState(false);
 
-  // State สำหรับตรวจสอบพิกัด
-  const [locationStatus, setLocationStatus] = useState('checking'); // checking, allowed, denied, error, too_far
+  // 🔥 TEST MODE: ตั้งค่าเริ่มต้นเป็น 'allowed' เลย (เข้าได้ชัวร์)
+  const [locationStatus, setLocationStatus] = useState('allowed'); 
   const [distance, setDistance] = useState(0);
 
   useEffect(() => {
-    if (!navigator.geolocation) {
-        setLocationStatus('error');
-        return;
+    // พยายามขอพิกัด GPS เพื่อเก็บข้อมูล (แต่ไม่บล็อกถ้าไม่ได้)
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const userLat = position.coords.latitude;
+                const userLng = position.coords.longitude;
+                setUserLocation({ lat: userLat, lng: userLng });
+
+                // คำนวณระยะทางโชว์เฉยๆ
+                const dist = getDistanceFromLatLonInM(SHOP_LOCATION.lat, SHOP_LOCATION.lng, userLat, userLng);
+                setDistance(Math.round(dist));
+            },
+            (error) => {
+                console.warn("GPS Warning (Test Mode):", error);
+                // ไม่ต้องทำอะไร ปล่อยให้สั่งได้เลย
+            },
+            { enableHighAccuracy: true, timeout: 5000 }
+        );
     }
-
-    // ฟังก์ชันสำเร็จ (Success)
-    const success = (position) => {
-        const userLat = position.coords.latitude;
-        const userLng = position.coords.longitude;
-        
-        setUserLocation({ lat: userLat, lng: userLng });
-
-        const dist = getDistanceFromLatLonInM(SHOP_LOCATION.lat, SHOP_LOCATION.lng, userLat, userLng);
-        setDistance(Math.round(dist));
-
-        if (dist <= ALLOWED_DISTANCE_METERS) {
-            setLocationStatus('allowed'); 
-        } else {
-            setLocationStatus('too_far');
-        }
-    };
-
-    // ฟังก์ชันล้มเหลว (Error)
-    const error = (err) => {
-        console.error("GPS Error:", err);
-        setLocationStatus('denied');
-    };
-
-    // เรียกขอพิกัด (ขอความแม่นยำสูง)
-    navigator.geolocation.getCurrentPosition(success, error, { 
-        enableHighAccuracy: true, 
-        timeout: 5000, 
-        maximumAge: 0 
-    });
-
   }, []);
 
   useEffect(() => {
-    // ถ้าไม่มีโต๊ะ หรือ GPS ไม่ผ่าน ไม่ต้องโหลดข้อมูล
-    if (!tableId || locationStatus !== 'allowed') return; 
-    
+    if (!tableId) return; // ไม่ต้องเช็ค locationStatus แล้ว
     const initData = async () => {
        const { data: t } = await supabase.from("restaurant_tables").select("*").eq("id", tableId).single();
        if (t) setTable(t);
@@ -110,9 +91,9 @@ function OrderPageContent() {
        if (m) setMenu(m);
     };
     initData();
-  }, [tableId, locationStatus]);
+  }, [tableId]);
 
-  // Helper Functions
+  // Helper Functions (เหมือนเดิม)
   const getSelection = (itemId) => selections[itemId] || { noodle: '', extras: [], isTakeaway: false };
   const handleNoodleChange = (itemId, val) => { setSelections(prev => ({ ...prev, [itemId]: { ...getSelection(itemId), noodle: val } })); };
   const handleExtraToggle = (itemId, extraName) => { const current = getSelection(itemId); const newExtras = current.extras.includes(extraName) ? current.extras.filter(e => e !== extraName) : [...current.extras, extraName]; setSelections(prev => ({ ...prev, [itemId]: { ...current, extras: newExtras } })); };
@@ -127,35 +108,17 @@ function OrderPageContent() {
   const addToCart = (item, variant = 'normal') => { 
       const sel = getSelection(item.id); 
       if (item.category === 'Noodles' && !sel.noodle) return alert("กรุณาเลือกเส้นก่อนครับ 🍜"); 
-      
-      // สร้าง UUID เพื่อให้แต่ละรายการไม่ซ้ำกัน (แยกบรรทัด)
-      const newItem = { 
-          uuid: Date.now() + Math.random(), 
-          id: item.id, 
-          name: item.name, 
-          variant: variant, 
-          noodle: sel.noodle || 'none', 
-          extras: [...sel.extras], 
-          isTakeaway: sel.isTakeaway, 
-          pricePerUnit: calculateItemPrice(item, variant, sel.extras), 
-          category: item.category 
-      };
+      const newItem = { uuid: Date.now() + Math.random(), id: item.id, name: item.name, variant: variant, noodle: sel.noodle || 'none', extras: [...sel.extras], isTakeaway: sel.isTakeaway, pricePerUnit: calculateItemPrice(item, variant, sel.extras), category: item.category };
       setCart(prev => [...prev, newItem]);
   };
   
-  // ลบรายการล่าสุดที่เหมือนกัน (จากหน้าเมนู)
   const removeFromCart = (item, variant = 'normal') => { 
       const sel = getSelection(item.id); 
       const indexToRemove = [...cart].reverse().findIndex(cartItem => cartItem.id === item.id && cartItem.variant === variant && cartItem.noodle === (sel.noodle || 'none') && JSON.stringify(cartItem.extras.sort()) === JSON.stringify(sel.extras.sort()) && cartItem.isTakeaway === sel.isTakeaway);
       if (indexToRemove !== -1) { const realIndex = cart.length - 1 - indexToRemove; setCart(prev => prev.filter((_, i) => i !== realIndex)); }
   };
 
-  // ลบรายการเจาะจง (จากหน้าตะกร้า)
-  const deleteItemFromCartByUUID = (uuid) => { 
-      setCart(prev => prev.filter(item => item.uuid !== uuid)); 
-      if (cart.length <= 1) setShowCartDetail(false); 
-  };
-  
+  const deleteItemFromCartByUUID = (uuid) => { setCart(prev => prev.filter(item => item.uuid !== uuid)); if (cart.length <= 1) setShowCartDetail(false); };
   const getQtyInCart = (item, variant) => { const sel = getSelection(item.id); return cart.filter(cartItem => cartItem.id === item.id && cartItem.variant === variant && cartItem.noodle === (sel.noodle || 'none') && JSON.stringify(cartItem.extras.sort()) === JSON.stringify(sel.extras.sort()) && cartItem.isTakeaway === sel.isTakeaway).length; };
 
   const handleOrderNow = async () => {
@@ -173,34 +136,12 @@ function OrderPageContent() {
             return { id: c.id, name: fullName, price: c.pricePerUnit, quantity: 1, is_takeaway: c.isTakeaway };
         });
         const total = items.reduce((s, i) => s + i.price, 0);
-        
-        // ส่งออเดอร์ (สถานะรอจ่ายเงิน)
-        const { error: dbError } = await supabase.from('orders').insert([{ 
-            table_number: table.table_number, 
-            items, 
-            total_price: total, 
-            status: 'pending', 
-            payment_status: 'pending', 
-            order_type: 'dine_in', 
-            location_lat: userLocation?.lat || null, 
-            location_lng: userLocation?.lng || null 
-        }]);
-        
+        const { error: dbError } = await supabase.from('orders').insert([{ table_number: table.table_number, items, total_price: total, status: 'pending', payment_status: 'pending', order_type: 'dine_in', location_lat: userLocation?.lat || null, location_lng: userLocation?.lng || null }]);
         if (dbError) throw dbError;
-        
-        // อัปเดตโต๊ะว่ามีคนนั่ง
         await supabase.from('restaurant_tables').update({ status: 'occupied' }).eq('id', table.id);
-        
-        setIsOrdering(false); 
-        setCart([]); 
-        setSelections({}); 
-        setShowCartDetail(false);
+        setIsOrdering(false); setCart([]); setSelections({}); setShowCartDetail(false);
         alert("✅ สั่งอาหารเรียบร้อย! รอเสิร์ฟสักครู่นะครับ");
-    } catch (err) { 
-        setIsOrdering(false); 
-        console.error(err); 
-        alert(`❌ เกิดข้อผิดพลาด: ${err.message}`); 
-    }
+    } catch (err) { setIsOrdering(false); console.error(err); alert(`❌ เกิดข้อผิดพลาด: ${err.message}`); }
   };
 
   const categories = ['Noodles', 'GaoLao', 'Sides'];
@@ -209,54 +150,26 @@ function OrderPageContent() {
   const totalItems = cart.length;
   const totalPrice = cart.reduce((sum, item) => sum + item.pricePerUnit, 0);
 
-  // --- UI States (GPS Check) ---
+  // UI States
   if (!tableId) return <div className="h-screen flex items-center justify-center text-gray-500 text-xl font-bold bg-gray-50">📷 กรุณาสแกน QR Code ที่โต๊ะนะครับ</div>;
-  
-  if (locationStatus === 'checking') return (
-      <div className="h-screen flex flex-col items-center justify-center bg-gray-50 p-6 text-center">
-          <div className="text-4xl animate-bounce mb-4">🛰️</div>
-          <h2 className="text-xl font-bold text-gray-800">กำลังตรวจสอบตำแหน่ง...</h2>
-          <p className="text-gray-500 mt-2 text-sm">กรุณากด "อนุญาต" เพื่อยืนยันว่าท่านอยู่ที่ร้าน</p>
-      </div>
-  );
-
-  if (locationStatus === 'denied') return (
-      <div className="h-screen flex flex-col items-center justify-center bg-red-50 p-6 text-center">
-          <div className="text-4xl mb-4">❌</div>
-          <h2 className="text-xl font-bold text-red-600">ไม่ได้รับอนุญาตระบุพิกัด</h2>
-          <p className="text-gray-600 mt-2">ระบบต้องใช้ GPS เพื่อยืนยันตัวตน</p>
-          <button onClick={() => window.location.reload()} className="mt-6 bg-red-600 text-white px-6 py-2 rounded-xl shadow-lg">ลองใหม่อีกครั้ง</button>
-      </div>
-  );
-
-  if (locationStatus === 'too_far') return (
-      <div className="h-screen flex flex-col items-center justify-center bg-orange-50 p-6 text-center">
-          <div className="text-4xl mb-4">🏃‍♂️</div>
-          <h2 className="text-xl font-bold text-orange-700">ท่านอยู่นอกพื้นที่ร้าน</h2>
-          <p className="text-gray-600 mt-2">ห่างจากจุดสั่งอาหาร: <b>{distance} เมตร</b></p>
-          <p className="text-sm text-gray-400 mt-1">(ระยะที่กำหนด: {ALLOWED_DISTANCE_METERS} เมตร)</p>
-          <button onClick={() => window.location.reload()} className="mt-6 bg-orange-600 text-white px-6 py-2 rounded-xl shadow-lg">ตรวจสอบอีกครั้ง</button>
-      </div>
-  );
-
   if (!table) return <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-50">กำลังโหลดเมนู... ⏳</div>;
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-36 max-w-md mx-auto relative font-sans text-gray-800">
-      {/* Header */}
       <div className="bg-white px-5 py-4 sticky top-0 z-30 shadow-sm flex justify-between items-end border-b border-gray-100">
           <div>
             <h1 className="text-xl font-extrabold text-gray-800 tracking-tight">ก๋วยเตี๋ยวรสเด็ด 🥢</h1>
-            <p className="text-sm text-gray-400 font-medium">โต๊ะ {table.table_number} | <span className="text-green-500">📍 ในร้าน ({distance}ม.)</span></p>
+            <p className="text-sm text-gray-400 font-medium">โต๊ะ {table.table_number} 
+               {/* โชว์สถานะ Test Mode แทน */}
+               <span className="text-orange-500 ml-2">🛠️ Test Mode ({distance}ม.)</span>
+            </p>
           </div>
       </div>
       
-      {/* Category Tabs */}
       <div className="bg-white px-2 py-3 sticky top-[75px] z-20 flex gap-2 justify-center border-b border-gray-100 overflow-x-auto no-scrollbar">
           {categories.map(cat => ( <button key={cat} onClick={() => setActiveCategory(cat)} className={`flex-1 py-2 px-3 rounded-full text-sm font-bold whitespace-nowrap transition-all ${activeCategory === cat ? 'bg-orange-500 text-white shadow-md transform scale-105' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{categoryNames[cat]}</button> ))}
       </div>
 
-      {/* Menu List */}
       <div className="p-4 gap-4 flex flex-col">
         {filteredMenu.map((item) => { 
             const sel = getSelection(item.id); 
